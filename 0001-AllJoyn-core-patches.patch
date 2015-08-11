@@ -1,0 +1,206 @@
+From e8facbb71726d1facd8d3e06082b2c095eecd2b2 Mon Sep 17 00:00:00 2001
+From: Dainis Jonitis <dainis.jonitis@ubnt.com>
+Date: Tue, 11 Aug 2015 10:42:32 +0300
+Subject: [PATCH] AllJoyn core patches
+
+---
+ alljoyn_core/SConscript                |  5 +++++
+ alljoyn_core/router/DaemonTransport.cc | 19 +++++++++++++++++++
+ alljoyn_core/router/DaemonTransport.h  |  2 ++
+ alljoyn_core/src/KeyStore.h            | 20 ++++++++++++++------
+ build_core/conf/windows/SConscript     | 10 ++++++++--
+ common/SConscript                      | 25 +++++++++++++++++++++++--
+ common/inc/qcc/CertificateECC.h        |  2 +-
+ 7 files changed, 72 insertions(+), 11 deletions(-)
+
+diff --git a/alljoyn_core/SConscript b/alljoyn_core/SConscript
+index f874f0f..35effc7 100644
+--- a/alljoyn_core/SConscript
++++ b/alljoyn_core/SConscript
+@@ -61,6 +61,10 @@ ajenv.VariantDir('$OBJDIR_ALLJOYN_CORE/samples', 'samples', duplicate = 0)
+ ajenv.Install('$OBJDIR_ALLJOYN_CORE', ajenv.File('src/Status.xml'))
+ ajenv.Status('$OBJDIR_ALLJOYN_CORE/Status')
+ core_headers = ajenv.Install('$CPP_DISTDIR/inc/alljoyn', '$OBJDIR_ALLJOYN_CORE/Status.h')
++# This is to compile posix/Event.h which tries to include <Status.h> directly.
++core_headers = ajenv.Install('$CPP_DISTDIR/inc', '$OBJDIR_ALLJOYN_CORE/Status.h')
++core_headers = ajenv.Install('$CPP_DISTDIR/inc', '$OBJDIR_ALLJOYN_CORE/ProtectedKeyStoreListener.h')
++core_headers = ajenv.Install('$CPP_DISTDIR/inc/alljoyn', '$OBJDIR_ALLJOYN_CORE/KeyStore.h')
+ 
+ core_headers += ajenv.Install('$CPP_DISTDIR/inc/alljoyn', [ h for h in ajenv.Glob('inc/alljoyn/*.h') if h not in ajenv.Glob('inc/alljoyn/Status*.h') ])
+ 
+@@ -129,3 +133,4 @@ if not (ajenv['OS'] == 'darwin' and ajenv['CPU'] in ['arm', 'armv7', 'armv7s', '
+ 
+ # Build docs
+ installDocs = ajenv.SConscript('docs/SConscript', exports = ['ajenv', 'core_headers'])
++ 
+\ No newline at end of file
+diff --git a/alljoyn_core/router/DaemonTransport.cc b/alljoyn_core/router/DaemonTransport.cc
+index 984accb..57d31b9 100644
+--- a/alljoyn_core/router/DaemonTransport.cc
++++ b/alljoyn_core/router/DaemonTransport.cc
+@@ -60,6 +60,25 @@ DaemonTransport::~DaemonTransport()
+     Join();
+ }
+ 
++bool DaemonTransport::SupportsOptions(const SessionOpts& opts) const
++{
++    QCC_DbgTrace(("DaemonTransport::SupportsOptions()"));
++    bool rc = true;
++
++    if (opts.traffic != SessionOpts::TRAFFIC_MESSAGES ) {
++        QCC_DbgPrintf(("DaemonTransport::SupportsOptions(): traffic type mismatch"));
++        rc = false;
++    }
++
++    if (!(opts.transports & TRANSPORT_LOCAL)) {
++        QCC_DbgPrintf(("DaemonTransport::SupportsOptions(): transport mismatch"));
++        rc = false;
++    }
++
++    QCC_DbgPrintf(("DaemonTransport::SupportsOptions(): returns \"%s\"", rc == true ? "true" : "false"));
++    return rc;
++}
++
+ QStatus DaemonTransport::Start()
+ {
+     stopping = false;
+diff --git a/alljoyn_core/router/DaemonTransport.h b/alljoyn_core/router/DaemonTransport.h
+index 4289581..cb66b4a 100644
+--- a/alljoyn_core/router/DaemonTransport.h
++++ b/alljoyn_core/router/DaemonTransport.h
+@@ -116,6 +116,8 @@ class DaemonTransport : public Transport, public _RemoteEndpoint::EndpointListen
+      */
+     virtual QStatus NormalizeTransportSpec(const char* inSpec, qcc::String& outSpec, std::map<qcc::String, qcc::String>& argMap) const;
+ 
++    virtual bool SupportsOptions(const SessionOpts& opts) const;
++
+     /**
+      * Start listening for incoming connections on a specified bus address.
+      *
+diff --git a/alljoyn_core/src/KeyStore.h b/alljoyn_core/src/KeyStore.h
+index b68d0ed..b47894c 100644
+--- a/alljoyn_core/src/KeyStore.h
++++ b/alljoyn_core/src/KeyStore.h
+@@ -57,6 +57,15 @@ class KeyStore {
+   public:
+ 
+     /**
++     * State of the key store
++     */
++	enum StoreState {
++        UNAVAILABLE, /**< Key store has not been loaded */
++        LOADED,      /**< Key store is loaded */
++        MODIFIED     /**< Key store has been modified since it was loaded */
++    };
++
++	/**
+      * the key store index.
+      */
+     class Key {
+@@ -399,7 +408,10 @@ class KeyStore {
+      */
+     QStatus SearchAssociatedKeys(const Key& key, Key** list, size_t* numItems);
+ 
+-  private:
++      /** Get state of the key store. */
++    StoreState GetState() const { return storeState; }
++
++    private:
+ 
+     class KeyStoreEncryptionKey : public qcc::KeyBlob {
+       public:
+@@ -507,11 +519,7 @@ class KeyStore {
+     /**
+      * State of the key store
+      */
+-    enum {
+-        UNAVAILABLE, /**< Key store has not been loaded */
+-        LOADED,      /**< Key store is loaded */
+-        MODIFIED     /**< Key store has been modified since it was loaded */
+-    } storeState;
++	StoreState storeState;
+ 
+     /**
+      *  Type for a key record
+diff --git a/build_core/conf/windows/SConscript b/build_core/conf/windows/SConscript
+index 1e1005b..c3fd4b5 100644
+--- a/build_core/conf/windows/SConscript
++++ b/build_core/conf/windows/SConscript
+@@ -119,7 +119,10 @@ if env['VARIANT'] == 'debug':
+    # (/MDd') to prevent build errors. 
+    env.Append(CPPDEFINES=['_DEBUG', ('_ITERATOR_DEBUG_LEVEL', 2)])
+    env.Append(CFLAGS=['/MDd', '/Od'])
+-   env.Append(CXXFLAGS=['/MDd', '/Od', '/Ob1', '/W4', '/WX'])
++   if env['MSVC_VERSION'] == '14.0':
++      env.Append(CXXFLAGS=['/MDd', '/Od', '/Ob1', '/W4', '/WX', '/Wv:18'])
++   else:
++      env.Append(CXXFLAGS=['/MDd', '/Od', '/Ob1', '/W4', '/WX'])
+    env.Append(LINKFLAGS=['/debug'])
+    env.Append(JAVACFLAGS='-g -Xlint -Xlint:-serial')
+ else:
+@@ -127,7 +130,10 @@ else:
+    env.Append(CPPDEFINES=[('_ITERATOR_DEBUG_LEVEL', 0)])
+    
+    env.Append(CFLAGS=['/MD', '/Gy', '/O1', '/Ob2'])
+-   env.Append(CXXFLAGS=['/MD', '/Gy', '/O1', '/Ob2', '/W4', '/WX'])
++   if env['MSVC_VERSION'] == '14.0':
++       env.Append(CXXFLAGS=['/MD', '/Gy', '/O1', '/Ob2', '/W4', '/WX', '/Wv:18'])
++   else:
++       env.Append(CXXFLAGS=['/MD', '/Gy', '/O1', '/Ob2', '/W4', '/WX'])
+    env.Append(LINKFLAGS=['/opt:ref'])
+    env.Append(JAVACFLAGS='-Xlint -Xlint:-serial')
+ 
+diff --git a/common/SConscript b/common/SConscript
+index c85d18a..57f3a30 100644
+--- a/common/SConscript
++++ b/common/SConscript
+@@ -125,10 +125,31 @@ hdrs = { 'qcc': commonenv.File(['inc/qcc/Log.h',
+                                 'inc/qcc/KeyInfo.h',
+                                 'inc/qcc/KeyInfoECC.h',
+                                 'inc/qcc/CertificateECC.h',
+-                                'inc/qcc/platform.h']),
++                                'inc/qcc/platform.h',
++                                'inc/qcc/GUID.h',
++                                'inc/qcc/KeyBlob.h',
++                                'inc/qcc/Stream.h',
++                                'inc/qcc/Event.h',
++                                'inc/qcc/time.h',
++                                'inc/qcc/Socket.h',
++                                'inc/qcc/IPAddress.h',
++                                'inc/qcc/SocketTypes.h',
++                                'inc/qcc/SocketWrapper.h',
++                                'inc/qcc/Thread.h',
++                                'inc/qcc/StringSource.h',
++                                'inc/qcc/StringSink.h',
++                                'inc/qcc/FileStream.h',
++                                'inc/qcc/Util.h',
++                                'inc/qcc/Environ.h',
++                                'inc/qcc/Crypto.h']),
+          'qcc/${OS_GROUP}': commonenv.File(['inc/qcc/${OS_GROUP}/atomic.h',
+                                             'inc/qcc/${OS_GROUP}/platform_types.h',
+-                                            'inc/qcc/${OS_GROUP}/Mutex.h']) }
++                                            'inc/qcc/${OS_GROUP}/Mutex.h',
++                                            'inc/qcc/${OS_GROUP}/Event.h',
++                                            'inc/qcc/${OS_GROUP}/SocketTypes.h',
++                                            'inc/qcc/${OS_GROUP}/Thread.h',
++                                            'inc/qcc/${OS_GROUP}/FileStream.h',
++                                            'inc/qcc/${OS_GROUP}/util.h']) }
+ 
+ if commonenv['OS_GROUP'] == 'windows':
+     hdrs['qcc/${OS_GROUP}'] += commonenv.File(['inc/qcc/${OS_GROUP}/mapping.h'])
+diff --git a/common/inc/qcc/CertificateECC.h b/common/inc/qcc/CertificateECC.h
+index 2eec496..9a132d5 100644
+--- a/common/inc/qcc/CertificateECC.h
++++ b/common/inc/qcc/CertificateECC.h
+@@ -530,7 +530,7 @@ class CertificateX509 {
+      */
+     const bool IsCA() const
+     {
+-        return ca;
++        return ca != 0;
+     }
+ 
+     /**
+-- 
+1.9.4.msysgit.2
+
