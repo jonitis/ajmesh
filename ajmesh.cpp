@@ -259,7 +259,7 @@ static void SleepMsecs(unsigned msecs)
 
 static string GetUniqueMacAddress()
 {
-    default_random_engine generator;
+    random_device generator;
     uniform_int_distribution<int> distribution(0, 15);
     stringstream ss;
 
