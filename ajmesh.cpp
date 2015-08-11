@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <set>
 #include <sstream>
 #include <string>
@@ -18,9 +19,6 @@
 #include <thread>
 #include <utility>
 #include <vector>
-
-#include <qcc/StringUtil.h>
-#include <qcc/Util.h>
 
 #include <alljoyn/AllJoynStd.h>
 #include <alljoyn/BusAttachment.h>
@@ -203,7 +201,6 @@ public:
     void Init();
     const PeerCollection& Peers() { return peers; }
     void AddPeer(unique_ptr<PeerNode> peer);
-    void RemovePeer(const string& peerServiceName);
     void RemovePeer(PeerNode& peer);
     PeerNode* GetPeer(const string& peerServiceName) const;
     bool HasPeer(const string& peerServiceName) const;
@@ -228,8 +225,6 @@ public:
     string Test(const string& input) const;
 
 private:
-//    void PeerListChangedHandler(const InterfaceDescription::Member *member, const char *srcPath, Message &message);
-
     void AttachInterfaces();
     void RegisterHandlers();
     void UnregisterHandlers();
@@ -264,7 +259,16 @@ static void SleepMsecs(unsigned msecs)
 
 static string GetUniqueMacAddress()
 {
-    string mac = (qcc::RandHexString(6, true).c_str());
+    default_random_engine generator;
+    uniform_int_distribution<int> distribution(0, 15);
+    stringstream ss;
+
+    for (int i = 0; i < 12; i++) {
+        int v = distribution(generator);
+        ss << hex << v;
+    }
+
+    string mac = ss.str();
 
     return mac;
 }
@@ -325,7 +329,6 @@ AllJoynInitializer::~AllJoynInitializer()
     QStatus status;
 
 #ifdef ROUTER
-    AllJoynRouterShutdown();
     status = AllJoynRouterShutdown();
     if (status != ER_OK) {
         fprintf(stderr, "Failed to shut down AllJoyn bundled router\n");
@@ -1004,7 +1007,7 @@ void Application::EnablePeerSecurity()
 #else
     // In emulated environment we want to run more than one process instance on same machine.
     // Use process ID to distinguish application instances.
-    string uniqueKeystoreName = appName + "_" + to_string(qcc::GetPid());
+    string uniqueKeystoreName = appName + "_" + Bus().GetGlobalGUIDShortString().c_str();
 
     QStatus status = bus.EnablePeerSecurity(g_AuthMechanism, this, uniqueKeystoreName.c_str(), false);
 #endif
